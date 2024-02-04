@@ -14,7 +14,7 @@ learning_rate = 1e-3
 # network hyperparameters
 device = torch.device("cuda:0" if torch.cuda.is_available() else 'cpu')
 n_feat = 128 # hidden dimension feature
-n_cfeat = 512 # word vector
+max_text_len = 512 # word vector
 height = 64 # 64x64 image
 save_dir = './weights_pocho/'
 # diffusion hyperparameters
@@ -27,8 +27,8 @@ dataset_data_path = './dataset/dataset_conceptual_captions_lite.npy'
 dataset = CustomDataset(dataset_data_path)
 dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=1, drop_last=True)
 
-df = DiffusionModel(timesteps)
-model = Unet(in_channels=3, n_feat=n_feat, n_cfeat=n_cfeat, height=height).to(device)
+df = DiffusionModel(timesteps, height)
+model = Unet(in_channels=3, n_feat=n_feat, max_text_len=max_text_len, height=height).to(device)
 optimizer = Adam(model.parameters(), lr=learning_rate)
 
 
@@ -67,3 +67,4 @@ for epoch in range(n_epoch):
     print('saved model at ' + save_dir + "model_{:03d}.pth".format(epoch + 1))
 
 model.eval()
+print("Fin del entrenamiento")

@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from torchvision import transforms
 import matplotlib.pyplot as plt
-from t5 import t5_encode_text
+from model.t5 import t5_encode_text
 
 
 

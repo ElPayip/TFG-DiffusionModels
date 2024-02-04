@@ -5,7 +5,7 @@ from einops import rearrange
 from einops.layers.torch import Rearrange
 from einops_exts import rearrange_many, repeat_many
 from einops_exts.torch import EinopsToAndFrom
-from t5 import get_encoded_dim, prob_mask_like
+from model.t5 import get_encoded_dim, prob_mask_like
 import math
 
 
@@ -145,12 +145,12 @@ class Block(nn.Module):
 
 
 class UnetUp(nn.Module):
-  def __init__(self, in_channels, out_channels, time_cond_dim=None, text_cond_dim=None):
+  def __init__(self, in_channels, out_channels, time_cond_dim=None, text_cond_dim=None, device=None):
     super(UnetUp, self).__init__()
     # The model consists of a ConvTranspose2d layer for upsampling, followed by two ResidualConvBlock layers
     self.up = nn.ConvTranspose2d(in_channels, out_channels, 2, 2)
-    self.b1 = Block(out_channels, out_channels, time_cond_dim=time_cond_dim, text_cond_dim=text_cond_dim)
-    self.b2 = Block(out_channels, out_channels, time_cond_dim=time_cond_dim)
+    self.b1 = Block(out_channels, out_channels, time_cond_dim=time_cond_dim, text_cond_dim=text_cond_dim, device=device)
+    self.b2 = Block(out_channels, out_channels, time_cond_dim=time_cond_dim, device=device)
 
   def forward(self, x, skip, t=None, c=None):
     # Concatenate the input tensor x with the skip connection tensor along the channel dimension
@@ -165,11 +165,11 @@ class UnetUp(nn.Module):
 
 
 class UnetDown(nn.Module):
-  def __init__(self, in_channels, out_channels, time_cond_dim=None, text_cond_dim=None):
+  def __init__(self, in_channels, out_channels, time_cond_dim=None, text_cond_dim=None, device=None):
     super(UnetDown, self).__init__()
     # Each block consists of two Block layers, followed by a MaxPool2d layer for downsampling
-    self.b1 = Block(in_channels, out_channels, time_cond_dim=time_cond_dim)
-    self.b2 = Block(out_channels, out_channels, time_cond_dim=time_cond_dim, text_cond_dim=text_cond_dim)
+    self.b1 = Block(in_channels, out_channels, time_cond_dim=time_cond_dim, device=device)
+    self.b2 = Block(out_channels, out_channels, time_cond_dim=time_cond_dim, text_cond_dim=text_cond_dim, device=device)
 
     self.maxpool = nn.MaxPool2d(2)
 
