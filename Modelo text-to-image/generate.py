@@ -7,7 +7,7 @@ import torch
 # network hyperparameters
 device = torch.device("cuda:0" if torch.cuda.is_available() else 'cpu')
 n_feat = 128 # hidden dimension feature
-max_text_len = 512 # word vector
+max_text_len = 64 # word vector
 height = 64 # 64x64 image
 save_dir = './weights/flick8k/'
 # diffusion hyperparameters

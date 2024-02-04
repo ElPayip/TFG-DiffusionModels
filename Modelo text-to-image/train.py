@@ -22,7 +22,7 @@ timesteps = 500
 MAX_TEXT_LEN = 64
 
 
-dataset_data_path = './dataset/dataset_conceptual_captions_lite.npy'
+dataset_data_path = './datasets/dataset_conceptual_captions_lite.npy'
 # load dataset
 dataset = CustomDataset(dataset_data_path)
 dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=1, drop_last=True)
