@@ -24,183 +24,6 @@ class LayerNorm(nn.Module):
 
 
 
-class CrossAttention(nn.Module):
-    """
-    Multi-headed cross attention.
-    """
-
-    def __init__(
-            self,
-            dim: int,
-            *,
-            context_dim: int = None,
-            dim_head: int = 64,
-            heads: int = 8,
-            norm_context: bool = False
-    ):
-        """
-        :param dim: Input dimensionality.
-        :param context_dim: Context dimensionality.
-        :param dim_head: Dimensionality for each attention head.
-        :param heads: Number of attention heads.
-        :param norm_context: Whether to LayerNorm the context.
-        """
-        super().__init__()
-        self.scale = dim_head ** -0.5   # 1/sqrt(dh)
-        self.heads = heads
-        inner_dim = dim_head * heads
-
-        context_dim = context_dim if context_dim is not None else dim
-
-        self.norm = LayerNorm(dim)
-        self.norm_context = LayerNorm(context_dim) if norm_context else None
-
-        self.null_kv = nn.Parameter(torch.randn(2, dim_head))
-        self.to_q = nn.Linear(dim, inner_dim, bias=False)
-        self.to_kv = nn.Linear(context_dim, inner_dim * 2, bias=False)
-
-        self.to_out = nn.Sequential(
-            nn.Linear(inner_dim, dim, bias=False),
-            LayerNorm(dim)
-        )
-
-    def forward(self, x: torch.tensor, context: torch.tensor, mask: torch.tensor = None) -> torch.tensor:
-        b, n, device = *x.shape[:2], x.device
-
-        x = self.norm(x)
-        if self.norm_context is not None:
-          context = self.norm_context(context)
-
-        q, k, v = (self.to_q(x), *self.to_kv(context).chunk(2, dim=-1))
-
-        q, k, v = rearrange_many((q, k, v), 'b n (h d) -> b h n d', h=self.heads)
-
-        # add null key / value for classifier free guidance in prior net
-
-        nk, nv = repeat_many(self.null_kv.unbind(dim=-2), 'd -> b h 1 d', h=self.heads, b=b)
-
-        k = torch.cat((nk, k), dim=-2)
-        v = torch.cat((nv, v), dim=-2)
-
-        q = q * self.scale
-
-        sim = einsum('b h i d, b h j d -> b h i j', q, k)
-        max_neg_value = -torch.finfo(sim.dtype).max
-
-        if mask is not None:
-            mask = F.pad(mask, (1, 0), value=True)
-            mask = rearrange(mask, 'b j -> b 1 1 j')
-            sim = sim.masked_fill(~mask, max_neg_value)
-
-        attn = sim.softmax(dim=-1, dtype=torch.float32)
-
-        out = einsum('b h i j, b h j d -> b h i d', attn, v)
-        out = rearrange(out, 'b h n d -> b n (h d)')
-        return self.to_out(out)
-
-
-
-class Block(nn.Module):
-  def __init__(self, in_channels, out_channels, time_cond_dim=None, text_cond_dim=None, device='cuda'):
-    super().__init__()
-
-    self.time_fc = nn.Sequential(
-        nn.ReLU(),
-        nn.Linear(time_cond_dim, 2*out_channels)
-    ) if time_cond_dim is not None else None
-
-    self.attn = EinopsToAndFrom('b c h w', 'b (h w) c',
-                CrossAttention(dim=out_channels, context_dim=text_cond_dim, heads=4)
-    ) if text_cond_dim is not None else None
-
-    # First convolutional layer
-    self.conv1 = nn.Sequential(
-        nn.BatchNorm2d(in_channels),   # Batch normalization
-        nn.ReLU(),   # ReLU activation function
-        nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, device=device)   # 3x3 kernel with stride 1 and padding 1
-        )
-
-    self.norm = nn.BatchNorm2d(out_channels)
-    # Second convolutional layer
-    self.conv2 = nn.Sequential(
-        nn.ReLU(),   # ReLU activation function
-        nn.Conv2d(out_channels, out_channels, 3, 1, 1)   # 3x3 kernel with stride 1 and padding 1
-        )
-
-  def forward(self, x, t=None, c=None):
-    x = self.conv1(x)
-
-    if self.attn is not None and c is not None:
-      x = x + self.attn(x, context=c)   # Residual cross-attention
-    x = self.norm(x)
-
-    if self.time_fc is not None and t is not None:
-      t = self.time_fc(t)
-      t = rearrange(t, 'b c -> b c 1 1')  # (b, 2c, 1, 1)
-      scale, shift = t.chunk(2, dim=1)                  # (b, c, 1, 1) *2
-      x = x * (scale + 1) + shift
-
-    return self.conv2(x)
-
-
-
-class UnetUp(nn.Module):
-  def __init__(self, in_channels, out_channels, time_cond_dim=None, text_cond_dim=None, device=None):
-    super(UnetUp, self).__init__()
-    # The model consists of a ConvTranspose2d layer for upsampling, followed by two ResidualConvBlock layers
-    self.up = nn.ConvTranspose2d(in_channels, out_channels, 2, 2)
-    self.b1 = Block(out_channels, out_channels, time_cond_dim=time_cond_dim, text_cond_dim=text_cond_dim, device=device)
-    self.b2 = Block(out_channels, out_channels, time_cond_dim=time_cond_dim, device=device)
-
-  def forward(self, x, skip, t=None, c=None):
-    # Concatenate the input tensor x with the skip connection tensor along the channel dimension
-    x = torch.cat((x, skip), dim=1)
-
-    # Pass the concatenated tensor through the sequential model and return the output
-    x = self.up(x)
-    x = self.b1(x, t=t, c=c)
-    x = self.b2(x, t=t, c=c)
-    return x
-
-
-
-class UnetDown(nn.Module):
-  def __init__(self, in_channels, out_channels, time_cond_dim=None, text_cond_dim=None, device=None):
-    super(UnetDown, self).__init__()
-    # Each block consists of two Block layers, followed by a MaxPool2d layer for downsampling
-    self.b1 = Block(in_channels, out_channels, time_cond_dim=time_cond_dim, device=device)
-    self.b2 = Block(out_channels, out_channels, time_cond_dim=time_cond_dim, text_cond_dim=text_cond_dim, device=device)
-
-    self.maxpool = nn.MaxPool2d(2)
-
-  def forward(self, x, t=None, c=None):
-    x = self.b1(x, t, c)
-    x = self.b2(x, t, c)
-    return self.maxpool(x)
-
-
-
-class EmbedFC(nn.Module):
-  def __init__(self, input_dim, emb_dim):
-    super(EmbedFC, self).__init__()
-    #This class defines a generic one layer feed-forward neural network for embedding input data of
-    #dimensionality input_dim to an embedding space of dimensionality emb_dim.
-    self.input_dim = input_dim
-    self.emb_dim = emb_dim
-    self.model = nn.Sequential(
-        nn.Linear(input_dim, emb_dim),
-        nn.ReLU(),
-        nn.Linear(emb_dim, emb_dim)
-        )
-
-  def forward(self, x):
-    # flatten the input tensor
-    x = x.view(-1, self.input_dim)
-    # apply the model layers to the flattened tensor
-    return self.model(x).view(-1, self.emb_dim, 1, 1)
-
-
-
 class SinusoidalPosEmb(nn.Module):
     '''
     Generates sinusoidal positional embedding tensor. In this case, position corresponds to time. For more information
@@ -377,3 +200,305 @@ class TextConditioningLayer(nn.Module):
         # normalize conditioning tokens
         c = self.norm_cond(c)
         return t, c
+
+
+
+class CrossAttention(nn.Module):
+    """
+    Multi-headed cross attention.
+    """
+
+    def __init__(
+            self,
+            dim: int,
+            *,
+            context_dim: int = None,
+            dim_head: int = 64,
+            heads: int = 8,
+            norm_context: bool = False
+    ):
+        """
+        :param dim: Input dimensionality.
+        :param context_dim: Context dimensionality.
+        :param dim_head: Dimensionality for each attention head.
+        :param heads: Number of attention heads.
+        :param norm_context: Whether to LayerNorm the context.
+        """
+        super().__init__()
+        self.scale = dim_head ** -0.5   # 1/sqrt(dh)
+        self.heads = heads
+        inner_dim = dim_head * heads
+
+        context_dim = context_dim if context_dim is not None else dim
+
+        self.norm = LayerNorm(dim)
+        self.norm_context = LayerNorm(context_dim) if norm_context else None
+
+        self.null_kv = nn.Parameter(torch.randn(2, dim_head))
+        self.to_q = nn.Linear(dim, inner_dim, bias=False)
+        self.to_kv = nn.Linear(context_dim, inner_dim * 2, bias=False)
+
+        self.to_out = nn.Sequential(
+            nn.Linear(inner_dim, dim, bias=False),
+            LayerNorm(dim)
+        )
+
+    def forward(self, x: torch.tensor, context: torch.tensor, mask: torch.tensor = None) -> torch.tensor:
+        b, n, device = *x.shape[:2], x.device
+
+        x = self.norm(x)
+        if self.norm_context is not None:
+          context = self.norm_context(context)
+
+        q, k, v = (self.to_q(x), *self.to_kv(context).chunk(2, dim=-1))
+
+        q, k, v = rearrange_many((q, k, v), 'b n (h d) -> b h n d', h=self.heads)
+
+        # add null key / value for classifier free guidance in prior net
+
+        nk, nv = repeat_many(self.null_kv.unbind(dim=-2), 'd -> b h 1 d', h=self.heads, b=b)
+
+        k = torch.cat((nk, k), dim=-2)
+        v = torch.cat((nv, v), dim=-2)
+
+        q = q * self.scale
+
+        sim = einsum('b h i d, b h j d -> b h i j', q, k)
+        max_neg_value = -torch.finfo(sim.dtype).max
+
+        if mask is not None:
+            mask = F.pad(mask, (1, 0), value=True)
+            mask = rearrange(mask, 'b j -> b 1 1 j')
+            sim = sim.masked_fill(~mask, max_neg_value)
+
+        attn = sim.softmax(dim=-1, dtype=torch.float32)
+
+        out = einsum('b h i j, b h j d -> b h i d', attn, v)
+        out = rearrange(out, 'b h n d -> b n (h d)')
+        return self.to_out(out)
+  
+
+
+class SelfAttention(nn.Module):
+    """
+    Multi-headed self-attention
+    """
+
+    def __init__(
+            self,
+            dim: int,
+            *,
+            dim_head: int = 64,
+            heads: int = 8,
+            context_dim: int = None
+    ):
+        """
+        :param dim: Input dimensionality.
+        :param dim_head: Dimensionality for each attention head.
+        :param heads: Number of attention heads.
+        :param context_dim: Context dimensionality.
+        """
+        super().__init__()
+        self.scale = dim_head ** -0.5
+        self.heads = heads
+        inner_dim = dim_head * heads
+
+        self.norm = LayerNorm(dim)
+
+        self.null_kv = nn.Parameter(torch.randn(2, dim_head))
+        self.to_q = nn.Linear(dim, inner_dim, bias=False)
+        self.to_kv = nn.Linear(dim, dim_head * 2, bias=False)
+
+        self.to_context = nn.Sequential(nn.LayerNorm(context_dim), nn.Linear(context_dim, dim_head * 2)) if context_dim is not None else None
+
+        self.to_out = nn.Sequential(
+            nn.Linear(inner_dim, dim, bias=False),
+            LayerNorm(dim)
+        )
+
+    def forward(self, x: torch.tensor, context: torch.tensor = None, mask: torch.tensor = None,
+                attn_bias: torch.tensor = None) -> torch.tensor:
+
+        b, n, device = *x.shape[:2], x.device
+
+        x = self.norm(x)
+        q, k, v = (self.to_q(x), *self.to_kv(x).chunk(2, dim=-1))
+
+        q = rearrange(q, 'b n (h d) -> b h n d', h=self.heads)
+        q = q * self.scale
+
+        # add null key / value for classifier free guidance in prior net
+
+        nk, nv = repeat_many(self.null_kv.unbind(dim=-2), 'd -> b 1 d', b=b)
+        k = torch.cat((nk, k), dim=-2)
+        v = torch.cat((nv, v), dim=-2)
+
+        # add text conditioning, if present
+
+        if context is not None:
+            assert self.to_context is not None
+            ck, cv = self.to_context(context).chunk(2, dim=-1)
+            k = torch.cat((ck, k), dim=-2)
+            v = torch.cat((cv, v), dim=-2)
+
+        # calculate query / key similarities
+
+        sim = einsum('b h i d, b j d -> b h i j', q, k)
+
+        # relative positional encoding (T5 style)
+
+        if attn_bias is not None:
+            sim = sim + attn_bias
+
+        # masking
+
+        max_neg_value = -torch.finfo(sim.dtype).max
+
+        if mask is not None:
+            mask = F.pad(mask, (1, 0), value=True)
+            mask = rearrange(mask, 'b j -> b 1 1 j')
+            sim = sim.masked_fill(~mask, max_neg_value)
+
+        # attention
+
+        attn = sim.softmax(dim=-1, dtype=torch.float32)
+
+        # aggregate values
+
+        out = einsum('b h i j, b j d -> b h i d', attn, v)
+
+        out = rearrange(out, 'b h n d -> b n (h d)')
+        return self.to_out(out)
+
+
+
+class Block(nn.Module):
+  def __init__(self, in_channels, out_channels, time_cond_dim=None, text_cond_dim=None, device='cuda', residual=True):
+    super().__init__()
+    self.residual = residual
+
+    self.time_fc = nn.Sequential(
+        nn.ReLU(),
+        nn.Linear(time_cond_dim, 2*out_channels)
+    ) if time_cond_dim is not None else None
+
+    self.attn = EinopsToAndFrom('b c h w', 'b (h w) c',
+                CrossAttention(dim=out_channels, context_dim=text_cond_dim, heads=4)
+    ) if text_cond_dim is not None else None
+
+    # First convolutional layer
+    self.conv1 = nn.Sequential(
+        nn.BatchNorm2d(in_channels),   # Batch normalization
+        nn.ReLU(),   # ReLU activation function
+        nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, device=device)   # 3x3 kernel with stride 1 and padding 1
+        )
+
+    self.norm = nn.BatchNorm2d(out_channels)
+    # Second convolutional layer
+    self.conv2 = nn.Sequential(
+        nn.ReLU(),   # ReLU activation function
+        nn.Conv2d(out_channels, out_channels, 3, 1, 1)   # 3x3 kernel with stride 1 and padding 1
+        )
+    
+    self.res_conv = nn.Conv2d(in_channels, out_channels, 1) if in_channels != out_channels and residual else None
+
+  def forward(self, x, t=None, c=None):
+    x = self.conv1(x)
+
+    if self.attn is not None and c is not None:
+      x = x + self.attn(x, context=c)   # Residual cross-attention
+    x = self.norm(x)
+
+    if self.time_fc is not None and t is not None:
+      t = self.time_fc(t)
+      t = rearrange(t, 'b c -> b c 1 1')  # (b, 2c, 1, 1)
+      scale, shift = t.chunk(2, dim=1)                  # (b, c, 1, 1) *2
+      x = x * (scale + 1) + shift
+
+    return self.conv2(x) + (self.res_conv(x) if self.res_conv is not None else x if self.residual else 0)
+  
+
+
+class TransformerBlock(nn.Module):
+    """
+    Transformer encoder block. Responsible for applying attention at the end of a chain of :class:`.ResnetBlock`s at
+        each layer in the U-Met.
+    """
+    def __init__(
+            self,
+            dim: int,
+            *,
+            heads: int = 8,
+            dim_head: int = 32,
+            ff_mult: int = 2,
+            context_dim: int = None,
+            do_ff: bool = True
+    ):
+        """
+
+        :param dim: Number of channels in the input.
+        :param heads: Number of attention heads for multi-headed :class:`.Attention`.
+        :param dim_head: Dimensionality for each attention head in multi-headed :class:`.Attention`.
+        :param ff_mult: Channel depth multiplier for the :class:`.ChanFeedForward` MLP applied after multi-headed
+            attention.
+        :param context_dim: Dimensionality of the context.
+        """
+        super().__init__()
+        self.attn = EinopsToAndFrom('b c h w', 'b (h w) c',
+                                    SelfAttention(dim=dim, heads=heads, dim_head=dim_head, context_dim=context_dim))
+        self.ff = nn.Sequential(  # Feed forward
+            nn.BatchNorm2d(dim),
+            nn.Conv2d(dim, ff_mult*dim, 1, bias=False),
+            nn.GELU(),
+            nn.BatchNorm2d(ff_mult*dim),
+            nn.Conv2d(ff_mult*dim, dim, 1, bias=False)
+        ) if do_ff else None
+
+    def forward(self, x: torch.tensor, context: torch.tensor = None) -> torch.tensor:
+        x = self.attn(x, context=context) + x
+        if self.ff is not None:
+          x = self.ff(x) + x
+        return x
+
+
+
+class UnetUp(nn.Module):
+  def __init__(self, in_channels, out_channels, time_cond_dim=None, text_cond_dim=None, device=None, self_attn=False):
+    super(UnetUp, self).__init__()
+    self.skip_connect_scale = 2**-0.5
+    
+    # The model consists of a ConvTranspose2d layer for upsampling, followed by two ResidualConvBlock layers
+    self.b1 = Block(in_channels, out_channels, time_cond_dim=time_cond_dim, text_cond_dim=text_cond_dim, device=device)
+    self.b2 = Block(out_channels, out_channels, time_cond_dim=time_cond_dim, device=device)
+    self.attn = TransformerBlock(out_channels, heads=4, dim_head=out_channels//2) if self_attn else None
+    self.up = nn.ConvTranspose2d(out_channels, out_channels, 2, 2)
+
+  def forward(self, x, skip, t=None, c=None):
+    # Concatenate the input tensor x with the skip connection tensor along the channel dimension
+    skip = skip * self.skip_connect_scale
+    x = torch.cat((x, skip), dim=1)
+
+    # Pass the concatenated tensor through the sequential model and return the output
+    x = self.b1(x, t=t, c=c)
+    x = self.b2(x, t=t, c=c)
+    if self.attn is not None:
+       x = self.attn(x)
+    return self.up(x)
+
+
+
+class UnetDown(nn.Module):
+  def __init__(self, in_channels, out_channels, time_cond_dim=None, text_cond_dim=None, device=None, self_attn=False):
+    super(UnetDown, self).__init__()
+    # Each block consists of two Block layers, followed by a MaxPool2d layer for downsampling
+    self.b1 = Block(in_channels, out_channels, time_cond_dim=time_cond_dim, text_cond_dim=text_cond_dim, device=device)
+    self.b2 = Block(out_channels, out_channels, time_cond_dim=time_cond_dim, device=device)
+    self.attn = TransformerBlock(out_channels, heads=4, dim_head=out_channels//2) if self_attn else None
+    self.maxpool = nn.MaxPool2d(2)
+
+  def forward(self, x, t=None, c=None):
+    x = self.b1(x, t, c)
+    x = self.b2(x, t, c)
+    if self.attn is not None:
+       x = self.attn(x)
+    return self.maxpool(x)
