@@ -131,7 +131,7 @@ class Block(nn.Module):
     x = self.conv1(x)
 
     if self.attn is not None and c is not None:
-      x = x + self.attn(x, context=c)
+      x = x + self.attn(x, context=c)   # Residual cross-attention
     x = self.norm(x)
 
     if self.time_fc is not None and t is not None:

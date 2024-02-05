@@ -60,7 +60,7 @@ for epoch in range(n_epoch):
     training_steps+=1
     if (training_steps%100) == 0:
       print("Total train step: {}, Loss: {}".format(training_steps,loss))
-  #print("Total Loss: {}".format(total_loss))
+  print("Total Loss: {}".format(total_loss))
   # save model periodically
   if epoch%100==0 or epoch == int(n_epoch-1):
     torch.save(model.state_dict(), save_dir + "model_{:03d}.pth".format(epoch + 1))

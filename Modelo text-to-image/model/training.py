@@ -10,7 +10,10 @@ class CustomDataset(Dataset):
     self.len = file.item()['length']
 
     if transform is None:
-      self.transform = transforms.ToTensor()
+      self.transform = transforms.Compose([
+          transforms.ToTensor(),
+          transforms.Normalize(0.5,0.5)
+          ])
     else:
       self.transform = transform
 
