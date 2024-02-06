@@ -403,6 +403,7 @@ class Block(nn.Module):
     self.res_conv = nn.Conv2d(in_channels, out_channels, 1) if in_channels != out_channels and residual else None
 
   def forward(self, x, t=None, c=None):
+    x0 = x
     x = self.conv1(x)
 
     if self.attn is not None and c is not None:
@@ -415,7 +416,7 @@ class Block(nn.Module):
       scale, shift = t.chunk(2, dim=1)                  # (b, c, 1, 1) *2
       x = x * (scale + 1) + shift
 
-    return self.conv2(x) + (self.res_conv(x) if self.res_conv is not None else x if self.residual else 0)
+    return self.conv2(x) + (self.res_conv(x0) if self.res_conv is not None else x0 if self.residual else 0)
   
 
 

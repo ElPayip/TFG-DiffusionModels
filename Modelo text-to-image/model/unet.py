@@ -22,16 +22,16 @@ class Unet(nn.Module):
 
     # Initialize the down-sampling path of the U-Net
     self.down = nn.ModuleList([UnetDown(n_feat//4, n_feat//2, time_cond_dim=time_cond_dim, text_cond_dim=n_feat, device=device),    # down1 (b, 64, 32, 32)
-                 UnetDown(n_feat//2, n_feat, time_cond_dim=time_cond_dim, text_cond_dim=n_feat, device=device),                     # down2 (b, 128, 16, 16)
-                 UnetDown(n_feat, n_feat, time_cond_dim=time_cond_dim, text_cond_dim=n_feat, device=device)])                       # down3 (b, 128, 8, 8)
+                 UnetDown(n_feat//2, n_feat, time_cond_dim=time_cond_dim, text_cond_dim=n_feat, device=device, self_attn=True),                     # down2 (b, 128, 16, 16)
+                 UnetDown(n_feat, n_feat, time_cond_dim=time_cond_dim, text_cond_dim=n_feat, device=device, self_attn=True)])                       # down3 (b, 128, 8, 8)
 
     self.mid1 = Block(n_feat, n_feat, time_cond_dim=time_cond_dim, text_cond_dim=n_feat, device=device)
     self.mid_attn = TransformerBlock(n_feat, do_ff=False)
     self.mid2 = Block(n_feat, n_feat, time_cond_dim=time_cond_dim, text_cond_dim=n_feat, device=device)         # mid  (b, 128, 8, 8)
 
     # Initialize the up-sampling path of the U-Net
-    self.up = nn.ModuleList([UnetUp(2*n_feat, n_feat, time_cond_dim=time_cond_dim, text_cond_dim=n_feat, device=device),       # up1 (b, 128, 16, 16)
-               UnetUp(2*n_feat, n_feat//2, time_cond_dim=time_cond_dim, text_cond_dim=n_feat, device=device),                  # up2 (b, 64, 32, 32)
+    self.up = nn.ModuleList([UnetUp(2*n_feat, n_feat, time_cond_dim=time_cond_dim, text_cond_dim=n_feat, device=device, self_attn=True),       # up1 (b, 128, 16, 16)
+               UnetUp(2*n_feat, n_feat//2, time_cond_dim=time_cond_dim, text_cond_dim=n_feat, device=device, self_attn=True),                  # up2 (b, 64, 32, 32)
                UnetUp(n_feat, n_feat//4, time_cond_dim=time_cond_dim, text_cond_dim=n_feat, device=device)])                   # up3 (b, 32, 64, 64)
 
     # Initialize the final convolutional layers to map to the same number of channels as the input image
