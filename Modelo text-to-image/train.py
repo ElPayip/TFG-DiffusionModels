@@ -29,14 +29,14 @@ dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_worker
 df = DiffusionModel(timesteps, height)
 model = Unet(in_channels=3, n_feat=n_feat, max_text_len=max_text_len, height=height, device=device).to(device)
 optimizer = Adam(model.parameters(), lr=learning_rate)
-scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer,
+'''scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer,
                                                 max_lr=0.0105,
                                                 steps_per_epoch=len(dataloader),
                                                 epochs=n_epoch,
                                                 pct_start=0.43,
                                                 div_factor=10,
                                                 final_div_factor=1000,
-                                                three_phase=True, verbose=False)
+                                                three_phase=True, verbose=False)'''
 
 
 training_steps = 0
@@ -64,7 +64,7 @@ for epoch in range(n_epoch):
     total_loss += loss.item()
     loss.backward()
     optimizer.step()
-    scheduler.step()
+    #scheduler.step()
     training_steps+=1
     if (training_steps%100) == 0:
       print("Total train step: {}, Loss: {}".format(training_steps,loss))
