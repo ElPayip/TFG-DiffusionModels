@@ -464,36 +464,37 @@ class TransformerBlock(nn.Module):
 
 
 class UnetUp(nn.Module):
-  def __init__(self, in_channels, out_channels, time_cond_dim=None, text_cond_dim=None, device=None, self_attn=False):
+  def __init__(self, in_channels, out_channels, time_cond_dim=None, text_cond_dim=None, device=None, self_attn=False, residual=True):
     super(UnetUp, self).__init__()
     self.skip_connect_scale = 2**-0.5
     
     # The model consists of a ConvTranspose2d layer for upsampling, followed by two ResidualConvBlock layers
-    self.b1 = Block(in_channels, out_channels, time_cond_dim=time_cond_dim, text_cond_dim=text_cond_dim, device=device)
-    self.b2 = Block(out_channels, out_channels, time_cond_dim=time_cond_dim, device=device)
+    self.up = nn.ConvTranspose2d(in_channels, out_channels, 2, 2)
+    self.b1 = Block(out_channels, out_channels, time_cond_dim=time_cond_dim, text_cond_dim=text_cond_dim, device=device, residual=residual)
+    self.b2 = Block(out_channels, out_channels, time_cond_dim=time_cond_dim, device=device, residual=residual)
     self.attn = TransformerBlock(out_channels, heads=4, dim_head=out_channels//2) if self_attn else None
-    self.up = nn.ConvTranspose2d(out_channels, out_channels, 2, 2)
 
   def forward(self, x, skip, t=None, c=None):
     # Concatenate the input tensor x with the skip connection tensor along the channel dimension
-    skip = skip * self.skip_connect_scale
+    #skip = skip * self.skip_connect_scale
     x = torch.cat((x, skip), dim=1)
 
     # Pass the concatenated tensor through the sequential model and return the output
+    x = self.up(x)
     x = self.b1(x, t=t, c=c)
     x = self.b2(x, t=t, c=c)
     if self.attn is not None:
        x = self.attn(x)
-    return self.up(x)
+    return x
 
 
 
 class UnetDown(nn.Module):
-  def __init__(self, in_channels, out_channels, time_cond_dim=None, text_cond_dim=None, device=None, self_attn=False):
+  def __init__(self, in_channels, out_channels, time_cond_dim=None, text_cond_dim=None, device=None, self_attn=False, residual=True):
     super(UnetDown, self).__init__()
     # Each block consists of two Block layers, followed by a MaxPool2d layer for downsampling
-    self.b1 = Block(in_channels, out_channels, time_cond_dim=time_cond_dim, text_cond_dim=text_cond_dim, device=device)
-    self.b2 = Block(out_channels, out_channels, time_cond_dim=time_cond_dim, device=device)
+    self.b1 = Block(in_channels, out_channels, time_cond_dim=time_cond_dim, text_cond_dim=text_cond_dim, device=device, residual=residual)
+    self.b2 = Block(out_channels, out_channels, time_cond_dim=time_cond_dim, device=device, residual=residual)
     self.attn = TransformerBlock(out_channels, heads=4, dim_head=out_channels//2) if self_attn else None
     self.maxpool = nn.MaxPool2d(2)
 
