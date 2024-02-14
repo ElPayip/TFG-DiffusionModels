@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+from datetime import datetime
 from torchvision import transforms
 import matplotlib.pyplot as plt
 from model.t5 import t5_encode_text
@@ -10,7 +11,7 @@ class DiffusionModel():
   # return beta_sqrt, alpha, alpha_sqrt, gamma, gamma_sqrt for noise and denoise image
   def __init__(self, timesteps, height, beta1=1e-4, beta2=0.02):
     self.device = torch.device("cuda:0" if torch.cuda.is_available() else 'cpu')
-    beta = torch.linspace(beta1, beta2, timesteps + 1, device='cpu')
+    beta = torch.linspace(beta1, beta2, timesteps + 1, device=self.device)
     alpha = 1 - beta
     one_by_sqrt_alpha = 1./alpha.sqrt()
     gamma = torch.cumprod(alpha, axis=0)
@@ -25,9 +26,6 @@ class DiffusionModel():
                    'beta_by_sqrt_one_minus_gamma':beta_by_sqrt_one_minus_gamma}
     self.timesteps = timesteps
     self.height = height
-    self.transform = transforms.Compose([
-          transforms.Normalize(0.5,0.5)
-          ])
 
   def show_noise_schedule(self):
     rows = 5
@@ -50,9 +48,19 @@ class DiffusionModel():
     if noise is None:
       noise = torch.randn_like(x_0)
     img = self.noise_schedule_dict['sqrt_gamma'].to(self.device)[time, None, None, None] * x_0.to(self.device) + (self.noise_schedule_dict['sqrt_one_minus_gamma'].to(self.device)[time, None, None, None]) * noise.to(self.device)
-    return img
+    return img#
 
   def unorm(self, img):
+    #img = torch.tensor(img)
+    #img = torch.clamp(img, -1.,1.)
+    #min, max = torch.aminmax(img)
+    #img = (img - min)/(max-min)
+    std = 0.26538094878196716
+    mean = 0.41665223240852356
+    img = (img*std)+mean
+    return img
+
+  def norm(self, img):
     img = torch.tensor(img)
     img = torch.clamp(img, -1.,1.)
     min, max = torch.aminmax(img)
@@ -113,7 +121,7 @@ class DiffusionModel():
     self.intermediate = np.stack(self.intermediate)
     return samples
 
-  def draw_samples_process(self):
+  def draw_samples_process(self, path=""):
     cols = len(self.intermediate)
     rows = self.intermediate[0].shape[0]
     plt.figure(figsize=(cols*2, rows*2))
@@ -121,7 +129,11 @@ class DiffusionModel():
       curr_time = self.intermediate_time[i]
       for j, curr_img in enumerate(curr_imgs):
         curr_img = self.unorm(curr_img)
+        curr_img = np.transpose(curr_img, (1, 2, 0))
         plt.subplot(rows, cols, (j*cols) + i + 1)
         plt.axis('off')
         plt.title("time: {}".format(curr_time))
-        plt.imshow(curr_img.permute(1,2,0))
+        #plt.imshow(curr_img.permute(1,2,0))
+        plt.imshow(curr_img)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    plt.savefig(f'{path}samples_process_{timestamp}.png')
