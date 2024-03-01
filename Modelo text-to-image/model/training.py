@@ -12,11 +12,13 @@ class CustomDataset(Dataset):
     file = np.load(filename, allow_pickle = True)
     self.dataset = file.item()['dataset']
     self.len = file.item()['length']
-
+    self.name = file.item()['name']
+    if self.name == 'flickr30k':
+        self.label_per_img = len(self.dataset[0]['label'])
     if transform is None:
       self.transform = transforms.Compose([
           transforms.ToTensor(),
-          transforms.Normalize(0.5,0.5)
+          transforms.Normalize(0.692681610584259,0.28387242555618286)
           ])
     else:
       self.transform = transform
@@ -28,8 +30,15 @@ class CustomDataset(Dataset):
   # Get the image and label at a given index
   def __getitem__(self, idx):
     # Return the image and label as a tuple
-    image = self.transform(self.dataset[idx]['img'])
-    return (image, self.dataset[idx]['label'])
+    if self.name == 'flickr30k':
+        label_idx = idx % self.label_per_img
+        img_idx = idx // self.label_per_img
+        image = self.transform(self.dataset[img_idx]['img'])
+        caption = self.dataset[img_idx]['label'][label_idx]
+    else:
+        image = self.transform(self.dataset[idx]['img'])
+        caption = self.dataset[idx]['label']
+    return (image, caption)
 
   # Get the shapes of datas and labels
   def getshapes(self):
@@ -84,7 +93,7 @@ def find_lr(model, optimiser, loader, timesteps, df, start_val = 1e-6, end_val =
       optimiser.param_groups[0]['lr'] = lr
 
     if show:
-        show_lrs(log_lrs, losses)
+      show_lrs(log_lrs, losses)
 
     return log_lrs, losses
 

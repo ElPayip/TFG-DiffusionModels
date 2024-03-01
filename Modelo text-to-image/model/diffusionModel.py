@@ -35,29 +35,32 @@ class DiffusionModel():
       plt.subplot(rows, cols, i + 1)
       plt.title(schedule)
       curr_schedule = self.noise_schedule_dict[schedule]
-      plt.plot(curr_schedule)
+      plt.plot(curr_schedule.to('cpu'))
 
   def show_noise_schedule2(self):
     for i, schedule in enumerate(self.noise_schedule_dict):
       plt.figure(figsize=(4,4))
       plt.title(schedule)
       curr_schedule = self.noise_schedule_dict[schedule]
-      plt.plot(curr_schedule)
+      plt.plot(curr_schedule.to('cpu'))
 
   def noise_image(self, x_0, time, noise=None):
     if noise is None:
       noise = torch.randn_like(x_0)
-    img = self.noise_schedule_dict['sqrt_gamma'].to(self.device)[time, None, None, None] * x_0.to(self.device) + (self.noise_schedule_dict['sqrt_one_minus_gamma'].to(self.device)[time, None, None, None]) * noise.to(self.device)
-    return img#
+    img = self.noise_schedule_dict['sqrt_gamma'].to(self.device)[time, None, None, None] * x_0.to(self.device)+(self.noise_schedule_dict['sqrt_one_minus_gamma'].to(self.device)[time, None, None, None]) * noise.to(self.device)
+    return img
 
   def unorm(self, img):
     #img = torch.tensor(img)
     #img = torch.clamp(img, -1.,1.)
     #min, max = torch.aminmax(img)
     #img = (img - min)/(max-min)
-    std = 0.26538094878196716
-    mean = 0.41665223240852356
+    std = 0.2753
+    mean = 0.6926
     img = (img*std)+mean
+    #img = torch.tensor(img)
+    #min, max = torch.aminmax(img)
+    #img = (img - min)/(max-min)
     return img
 
   def norm(self, img):
@@ -95,27 +98,34 @@ class DiffusionModel():
       x_t_minus_1 = mean + noise
     else:
       x_t_minus_1 = mean
-
     return x_t_minus_1
 
   # sample with context using standard algorithm
   @torch.no_grad()
-  def sample_ddpm_context(self, model, n_sample, labels, save_rate=20):
+  def sample_ddpm_context(self, model, n_sample, labels, text_emb_func=None, save_rate=20, samples=None, timesteps=None):
     # x_T
-    samples = torch.randn(size=(n_sample, 3, self.height, self.height)).to(self.device)
+    if samples is None:
+        samples = torch.randn(size=(n_sample, 3, self.height, self.height)).to(self.device)
+    if timesteps is None:
+        timesteps = self.timesteps
     # arrays to keep track of generated steps for plotting
     self.intermediate = []
     self.intermediate_time = []
-    for i in range(self.timesteps, 0, -1):
+    for i in range(timesteps, 0, -1):
         # reshape time tensor
-        t = torch.tensor([i/self.timesteps],).to(self.device)
+        t = torch.tensor([i/timesteps],).to(self.device)
         t = t*torch.ones(n_sample).to(self.device)
         # sample some random noise to inject back in. For i = 1, don't add back in noise
         z = torch.randn_like(samples) if i > 1 else torch.zeros_like(samples)
-        t_emb, t_mask = t5_encode_text(labels)
+        if text_emb_func != None:
+            t_emb, t_mask = text_emb_func(labels)
+        else:
+            t_emb, t_mask = t5_encode_text(labels)
         eps = model(samples, t, t_emb=t_emb, t_mask=t_mask)    # predict noise e_(x_t,t, ctx)
         samples = self.denoise_add_noise(samples, i, eps, z=z)
-        if i % save_rate==0 or i==self.timesteps or i<8:
+        if i % save_rate==0 or i==timesteps or i<8:
+            print(f'EPS -> Mean: {eps.mean()}, std: {eps.std()}')
+            print(f'SAMPLES -> Mean: {samples.mean()}, std: {samples.std()}')
             self.intermediate.append(samples.detach().cpu().numpy())
             self.intermediate_time.append(i)
     self.intermediate = np.stack(self.intermediate)
@@ -137,3 +147,4 @@ class DiffusionModel():
         plt.imshow(curr_img)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     plt.savefig(f'{path}samples_process_{timestamp}.png')
+    #plt.close()

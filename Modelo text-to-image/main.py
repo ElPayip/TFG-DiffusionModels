@@ -7,8 +7,6 @@ from minimagen.t5 import get_encoded_dim
 
 # Constants
 BATCH_SIZE = 4  # Batch size training data
-MAX_NUM_WORDS = 64  # Max number of words allowed in a caption
-IMG_SIDE_LEN = 128  # Side length of the training images/final output image from Imagen
 EPOCHS = 5  # Number of epochs to train from
 T5_NAME = "t5_small"  # Name of the T5 encoder to use
 

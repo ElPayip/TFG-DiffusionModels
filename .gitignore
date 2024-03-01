@@ -1,2 +1,4 @@
 /Modelo text-to-image/datasets/
 **/__pycache__/
+**/2D_virtual_human/
+**/HumanArt/

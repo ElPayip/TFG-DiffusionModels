@@ -156,7 +156,6 @@ class TextConditioningLayer(nn.Module):
 
             # Prob. mask for clf-free guidance conditional dropout. Tells which elts in the batch to keep. Size (b,).
             text_keep_mask = prob_mask_like((text_embeds.shape[0],), 1 - cond_drop_prob, device=device)
-
             # Combines T5 and clf-free guidance masks
             text_keep_mask_embed = rearrange(text_keep_mask, 'b -> b 1 1')
             if text_mask is not None:
@@ -378,8 +377,8 @@ class Block(nn.Module):
     self.residual = residual
 
     self.time_fc = nn.Sequential(
-        nn.ReLU(),
-        nn.Linear(time_cond_dim, 2*out_channels)
+        nn.Linear(time_cond_dim, 2*out_channels),
+        nn.ReLU()
     ) if time_cond_dim is not None else None
 
     self.attn = EinopsToAndFrom('b c h w', 'b (h w) c',
@@ -389,15 +388,15 @@ class Block(nn.Module):
     # First convolutional layer
     self.conv1 = nn.Sequential(
         nn.BatchNorm2d(in_channels),   # Batch normalization
-        nn.ReLU(),   # ReLU activation function
-        nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, device=device)   # 3x3 kernel with stride 1 and padding 1
+        nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, device=device),   # 3x3 kernel with stride 1 and padding 1
+        nn.ReLU()   # ReLU activation function
         )
 
     self.norm = nn.BatchNorm2d(out_channels)
     # Second convolutional layer
     self.conv2 = nn.Sequential(
-        nn.ReLU(),   # ReLU activation function
-        nn.Conv2d(out_channels, out_channels, 3, 1, 1)   # 3x3 kernel with stride 1 and padding 1
+        nn.Conv2d(out_channels, out_channels, 3, 1, 1),   # 3x3 kernel with stride 1 and padding 1
+        nn.ReLU()   # ReLU activation function
         )
     
     self.res_conv = nn.Conv2d(in_channels, out_channels, 1) if in_channels != out_channels and residual else None
@@ -407,14 +406,15 @@ class Block(nn.Module):
     x = self.conv1(x)
 
     if self.attn is not None and c is not None:
-      x = x + self.attn(x, context=c)   # Residual cross-attention
+        x = x + self.attn(x, context=c)   # Residual cross-attention
+    
     x = self.norm(x)
 
     if self.time_fc is not None and t is not None:
-      t = self.time_fc(t)
-      t = rearrange(t, 'b c -> b c 1 1')  # (b, 2c, 1, 1)
-      scale, shift = t.chunk(2, dim=1)                  # (b, c, 1, 1) *2
-      x = x * (scale + 1) + shift
+        t = self.time_fc(t)
+        t = rearrange(t, 'b c -> b c 1 1')  # (b, 2c, 1, 1)
+        scale, shift = t.chunk(2, dim=1)    # (b, c, 1, 1) *2
+        x = x * (scale + 1) + shift
 
     return self.conv2(x) + (self.res_conv(x0) if self.res_conv is not None else x0 if self.residual else 0)
   
@@ -450,9 +450,10 @@ class TransformerBlock(nn.Module):
         self.ff = nn.Sequential(  # Feed forward
             nn.BatchNorm2d(dim),
             nn.Conv2d(dim, ff_mult*dim, 1, bias=False),
-            nn.GELU(),
+            nn.ReLU(),
             nn.BatchNorm2d(ff_mult*dim),
-            nn.Conv2d(ff_mult*dim, dim, 1, bias=False)
+            nn.Conv2d(ff_mult*dim, dim, 1, bias=False),
+            nn.ReLU()
         ) if do_ff else None
 
     def forward(self, x: torch.tensor, context: torch.tensor = None) -> torch.tensor:

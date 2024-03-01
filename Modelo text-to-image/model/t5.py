@@ -20,10 +20,9 @@ def t5_encode_text(text, max_length=MAX_LENGTH):
     _check_downloads()
     tokenizer = T5_version['tokenizer']
     model = T5_version['model']
-
     # Move to cuda is available
     if torch.cuda.is_available():
-        device = torch.device('cuda')
+        device = torch.device('cuda:0')
         model = model.to(device)
     else:
         device = torch.device('cpu')

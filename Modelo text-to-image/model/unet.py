@@ -18,8 +18,11 @@ class Unet(nn.Module):
     self.text_cond = TextConditioningLayer(n_feat, max_text_len=max_text_len)
 
     # Initialize the initial convolutional layer                                                                # in    (b, 3, 64, 64)
-    self.init_conv = nn.Sequential(nn.Conv2d(in_channels, n_feat//32, kernel_size=3, padding=1),                # init  (b, 32, 64, 64)
+    self.init_conv = nn.Sequential(nn.BatchNorm2d(in_channels),
+                                   nn.Conv2d(in_channels, n_feat//32, kernel_size=3, padding=1),                # init  (b, 32, 64, 64)
+                                   nn.ReLU(),
                                    nn.Conv2d(n_feat//32, n_feat//24, kernel_size=7, padding=3),
+                                   nn.ReLU(),
                                    nn.Conv2d(n_feat//24, n_feat//16, kernel_size=15, padding=7),
                                    )
 
@@ -36,14 +39,16 @@ class Unet(nn.Module):
     self.up = nn.ModuleList([UnetUp(2*n_feat, n_feat//2, time_cond_dim=time_cond_dim, text_cond_dim=n_feat, device=device),       # up1 (b, 256, 8, 8)
                UnetUp(n_feat, n_feat//4, time_cond_dim=time_cond_dim, device=device),                         # up2 (b, 128, 16, 16)
                UnetUp(n_feat//2, n_feat//8, time_cond_dim=time_cond_dim, device=device),                      # up3 (b, 64, 32, 32)
-               UnetUp(n_feat//4, n_feat//16, time_cond_dim=time_cond_dim, device=device)])                    # up3 (b, 32, 64, 64)
+               UnetUp(n_feat//4, n_feat//16, time_cond_dim=time_cond_dim, device=device)])                    # up4 (b, 32, 64, 64)
 
     # Initialize the final convolutional layers to map to the same number of channels as the input image
     self.out = nn.Sequential(
         nn.BatchNorm2d(n_feat//16),
         nn.Conv2d(n_feat//16, n_feat//32, 3, 1, 1),
         nn.ReLU(),
-        nn.Conv2d(n_feat//32, self.in_channels, 3, 1, 1), # map to same number of channels as input
+        nn.Conv2d(n_feat//32, n_feat//64, 3, 1, 1),
+        nn.ReLU(),
+        nn.Conv2d(n_feat//64, self.in_channels, 3, 1, 1), # map to same number of channels as input
     )                                                                                                    # out (b, 3, 64, 64)
 
 
