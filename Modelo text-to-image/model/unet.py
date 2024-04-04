@@ -3,7 +3,8 @@ from model.layers import *
 
 
 class Unet(nn.Module):
-  def __init__(self, in_channels, n_feat=512, max_text_len=512, height=64, cond_drop_prob=0.1, device=None):  # cfeat - context features
+  def __init__(self, in_channels, n_feat=512, max_text_len=512, height=64, cond_drop_prob=0.1, device=None,
+               x_attns=(True, True, True), self_attns=(False, True, True)):  # cfeat - context features
     super(Unet, self).__init__()
     # number of input channels, number of intermediate feature maps and number of classes
     self.in_channels = in_channels
@@ -12,6 +13,8 @@ class Unet(nn.Module):
     self.cond_drop_prob = cond_drop_prob
     self.device = device
     time_cond_dim = 4*n_feat
+    assert len(x_attns) == len(self_attns), "'x_attns' y 'self_attns' deben ser del mismo tamaño"
+    n_floors = len(x_attns)
 
     # Embed the timestep and context labels with a one-layer fully connected neural network
     self.time_cond = TimeConditioningLayer(n_feat, time_cond_dim)
@@ -19,36 +22,41 @@ class Unet(nn.Module):
 
     # Initialize the initial convolutional layer                                                                # in    (b, 3, 64, 64)
     self.init_conv = nn.Sequential(nn.BatchNorm2d(in_channels),
-                                   nn.Conv2d(in_channels, n_feat//32, kernel_size=3, padding=1),                # init  (b, 32, 64, 64)
+                                   nn.Conv2d(in_channels, n_feat//(2 * 2**n_floors), kernel_size=3, padding=1),                # init  (b, 32, 64, 64)
                                    nn.ReLU(),
-                                   nn.Conv2d(n_feat//32, n_feat//24, kernel_size=7, padding=3),
+                                   nn.Conv2d(n_feat//(2 * 2**n_floors), n_feat//(1.5 * 2**n_floors), kernel_size=7, padding=3),
                                    nn.ReLU(),
-                                   nn.Conv2d(n_feat//24, n_feat//16, kernel_size=15, padding=7),
+                                   nn.Conv2d(n_feat//(1.5 * 2**n_floors), n_feat//(2**n_floors), kernel_size=15, padding=7),
                                    )
 
     # Initialize the down-sampling path of the U-Net
-    self.down = nn.ModuleList([UnetDown(n_feat//16, n_feat//8, time_cond_dim=time_cond_dim, device=device),    # down1 (b, 64, 32, 32)
-                 UnetDown(n_feat//8, n_feat//4, time_cond_dim=time_cond_dim, device=device),                   # down2 (b, 128, 16, 16)
-                 UnetDown(n_feat//4, n_feat//2, time_cond_dim=time_cond_dim, device=device),                   # down3 (b, 256, 8, 8)
-                 UnetDown(n_feat//2, n_feat, time_cond_dim=time_cond_dim, device=device)])                     # down4 (b, 512, 4, 4)
+    self.down = nn.ModuleList()
+    for i in range(n_floors):
+      self.down.append(UnetDown(n_feat//(2**(n_floors-i)), n_feat//(2**(n_floors-i-1)), 
+                                time_cond_dim=time_cond_dim, text_cond_dim=n_feat if x_attns[i] else None, 
+                                device=device, self_attn=self_attns[i]))
 
     self.mid1 = Block(n_feat, n_feat, time_cond_dim=time_cond_dim, text_cond_dim=n_feat, device=device)
-    self.mid2 = Block(n_feat, n_feat, time_cond_dim=time_cond_dim, text_cond_dim=n_feat, device=device)         # mid  (b, 512, 4, 4)
+    self.mid_attn1 = TransformerBlock(n_feat, context_dim=n_feat)
+    self.mid2 = Block(n_feat, n_feat, time_cond_dim=time_cond_dim, text_cond_dim=n_feat, device=device)
+    self.mid_attn2 = TransformerBlock(n_feat, context_dim=n_feat)
+    self.mid3 = Block(n_feat, n_feat, time_cond_dim=time_cond_dim, text_cond_dim=n_feat, device=device)         # mid  (b, 512, 4, 4)
 
     # Initialize the up-sampling path of the U-Net
-    self.up = nn.ModuleList([UnetUp(2*n_feat, n_feat//2, time_cond_dim=time_cond_dim, text_cond_dim=n_feat, device=device),       # up1 (b, 256, 8, 8)
-               UnetUp(n_feat, n_feat//4, time_cond_dim=time_cond_dim, device=device),                         # up2 (b, 128, 16, 16)
-               UnetUp(n_feat//2, n_feat//8, time_cond_dim=time_cond_dim, device=device),                      # up3 (b, 64, 32, 32)
-               UnetUp(n_feat//4, n_feat//16, time_cond_dim=time_cond_dim, device=device)])                    # up4 (b, 32, 64, 64)
+    self.up = nn.ModuleList()
+    for i in range(n_floors-1, -1, -1):
+      self.up.append(UnetUp(2 * n_feat//(2**(n_floors-i-1)), n_feat//(2**(n_floors-i)), 
+                                time_cond_dim=time_cond_dim, text_cond_dim=n_feat if x_attns[i] else None, 
+                                device=device, self_attn=self_attns[i]))
 
     # Initialize the final convolutional layers to map to the same number of channels as the input image
     self.out = nn.Sequential(
-        nn.BatchNorm2d(n_feat//16),
-        nn.Conv2d(n_feat//16, n_feat//32, 3, 1, 1),
+        nn.BatchNorm2d(n_feat//(2**n_floors)),
+        nn.Conv2d(n_feat//(2**n_floors), n_feat//(1.5 * 2**n_floors), 3, 1, 1),
         nn.ReLU(),
-        nn.Conv2d(n_feat//32, n_feat//64, 3, 1, 1),
+        nn.Conv2d(n_feat//(1.5 * 2**n_floors), n_feat//(2 * 2**n_floors), 3, 1, 1),
         nn.ReLU(),
-        nn.Conv2d(n_feat//64, self.in_channels, 3, 1, 1), # map to same number of channels as input
+        nn.Conv2d(n_feat//(2 * 2**n_floors), self.in_channels, 3, 1, 1), # map to same number of channels as input
     )                                                                                                    # out (b, 3, 64, 64)
 
 
@@ -74,7 +82,10 @@ class Unet(nn.Module):
     x = x_down[-1]
 
     x = self.mid1(x, t, c)
+    x = self.mid_attn1(x, c)
     x = self.mid2(x, t, c)
+    x = self.mid_attn2(x, c)
+    x = self.mid3(x, t, c)
 
     for i, up in enumerate(self.up):
       x = up(x, x_down[-i-1], t, c)
