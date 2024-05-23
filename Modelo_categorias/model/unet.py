@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from layers import *
+from model.layers import *
 
 
 class Unet(nn.Module):
