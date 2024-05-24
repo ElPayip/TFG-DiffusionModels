@@ -2,6 +2,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
+import matplotlib.pyplot as plt
 
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else 'cpu')
 SAVE_DIR = './weights/'
@@ -64,4 +65,13 @@ def train(model, diffusion, optimizer, train_dataset, validation_dataset=None, b
                     loss = F.mse_loss(pred_noise, noise)
                     total_loss.append(loss.item())
                 mean_loss_valid.append(np.mean(total_loss))
+
+        plt.figure()
+        plt.title("Train mean loss vs Validation mean loss")
+        plt.plot(range(len(mean_loss_train)), mean_loss_train, color='blue', linestyle='-', linewidth=2.0, label="train mean loss")
+        plt.plot(range(len(mean_loss_valid)), mean_loss_valid, color='red', linestyle='-', linewidth=2.0, label="validation mean loss")
+        plt.legend()
+        plt.savefig(f'./loss.png')
+        plt.close()
+
     model.eval()
