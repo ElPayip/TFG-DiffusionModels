@@ -55,7 +55,7 @@ class DiffusionModel():
 
   def unorm(self, img):
     std = 0.72
-    mean = 0.25
+    mean = 0.22
     img = (img*std)+mean
     #img = torch.tensor(img)
     #min, max = torch.aminmax(img)
