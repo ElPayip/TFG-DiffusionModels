@@ -26,4 +26,4 @@ Both datasets and pretrained weights of each model can be found in [this Drive f
 
 # How to run and train the models
 
-Each Notebook ``d\demo.ipynb`` has everything needed to train and generate images using its related model. It may be necessary to install some external libraries, like torch or matplotlib.
+To train a model, install its corresponding dataset. To use a pretrained model, install its corresponding pretrained weights file. Each Notebook ``d\demo.ipynb`` has everything needed to train and generate images using its related model. It may be necessary to install some external libraries, like torch or matplotlib.
